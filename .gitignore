@@ -1,4 +1,6 @@
 *.mp4
 *.mov
 fonts/
+src/fonts/
+src/output/
 .DS_Store
