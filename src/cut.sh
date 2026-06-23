@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 视频剪辑：MOV → MP4，distName 命名，标题淡入淡出（PNG + fade）
-# step 4：26s 起嵌入 Google 地图动画 movie.mov
-# 仅重编码片头+标题+缓冲（约 27s，一次编码），片尾流复制；地图段局部重编码
+# step 4：26s 起嵌入 Google 地图动画 movie.mov（3/4 居中叠加）
+# 局部重编码 + 关键帧对齐流复制拼接（-noaccurate_seek），避免拼接处卡顿
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -110,12 +110,37 @@ case "${VIDEO_CODEC}" in
   h264|avc1) ENCODER="h264_videotoolbox"; VIDEO_TAG="avc1"; BSF="h264_mp4toannexb" ;;
   *)         die "不支持的视频编码: ${VIDEO_CODEC}" ;;
 esac
-VIDEO_TIMESCALE=19200
+
+eval "$(python3 - "${FFPROBE}" "${INPUT_MOV}" <<'PY'
+import subprocess, shlex, sys
+
+ffprobe, path = sys.argv[1], sys.argv[2]
+row = subprocess.check_output(
+    [
+        ffprobe, "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=r_frame_rate,time_base",
+        "-of", "csv=p=0", path,
+    ],
+    text=True,
+).strip().split(",")
+r_fps = row[0].strip()
+time_base = row[1].strip() if len(row) > 1 else "1/19200"
+timescale = time_base.split("/")[1] if "/" in time_base else "19200"
+print(f"OUTPUT_FPS={shlex.quote(r_fps)}")
+print(f"VIDEO_TIMESCALE={shlex.quote(timescale)}")
+PY
+)"
+echo "源视频帧率 ${OUTPUT_FPS}，timescale ${VIDEO_TIMESCALE}"
 
 VIDEO_WIDTH="$("${FFPROBE}" -v error -select_streams v:0 -show_entries stream=width -of default=noprint_wrappers=1:nokey=1 "${INPUT_MOV}" | head -1 | cut -d, -f1 | tr -cd '0-9')"
 VIDEO_HEIGHT="$("${FFPROBE}" -v error -select_streams v:0 -show_entries stream=height -of default=noprint_wrappers=1:nokey=1 "${INPUT_MOV}" | head -1 | cut -d, -f1 | tr -cd '0-9')"
 [[ -n "${VIDEO_WIDTH}" && -n "${VIDEO_HEIGHT}" ]] || die "无法读取视频分辨率"
 FONT_SIZE="$(awk -v h="${VIDEO_HEIGHT}" 'BEGIN { printf "%d", h / 18 }')"
+
+HAS_AUDIO=0
+if "${FFPROBE}" -v error -select_streams a:0 -show_entries stream=index -of csv=p=0 "${INPUT_MOV}" >/dev/null 2>&1; then
+  HAS_AUDIO=1
+fi
 
 TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/media-cut.XXXXXX")"
 cleanup() { rm -rf "${TMPDIR}"; }
@@ -145,10 +170,7 @@ def next_keyframe(ffprobe: str, path: str, after: float) -> float:
     return after + 1.0
 
 ffprobe, path, anchor = sys.argv[1], sys.argv[2], float(sys.argv[3])
-kf = anchor + 0.01
-for _ in range(4):
-    kf = next_keyframe(ffprobe, path, kf)
-print(kf)
+print(next_keyframe(ffprobe, path, anchor))
 PY
 }
 
@@ -187,47 +209,67 @@ embed_map_animation() {
   map_end="$(awk -v ms="${MAP_START}" -v mb="${map_body}" 'BEGIN { print ms+mb }')"
   echo "嵌入 Google 地图动画 ${MAP_START}s ~ ${map_end}s（${MAP_MOV}）..."
 
+  local map_body_kf map_encode_dur map_rel_start map_overlay_end
+  map_body_kf="$(next_keyframe_after "${pre_map}" "$(awk -v ms="${MAP_START}" 'BEGIN { print ms - 0.05 }')")"
+  [[ -n "${map_body_kf}" ]] || die "无法计算地图段起始关键帧"
+
   map_tail_start="$(next_keyframe_after "${pre_map}" "${map_end}")"
-  [[ -n "${map_tail_start}" ]] || die "无法计算地图段关键帧切点"
+  [[ -n "${map_tail_start}" ]] || die "无法计算地图段结束关键帧切点"
+
+  map_encode_dur="$(awk -v end="${map_tail_start}" -v start="${map_body_kf}" 'BEGIN { print end - start }')"
+  if ! awk -v d="${map_encode_dur}" 'BEGIN { exit (d > 0.05) ? 0 : 1 }'; then
+    echo "地图重编码段过短，跳过嵌入..."
+    cp "${pre_map}" "${output}"
+    return 0
+  fi
+
+  map_rel_start="$(awk -v ms="${MAP_START}" -v kf="${map_body_kf}" 'BEGIN { d=ms-kf; print (d>0)?d:0 }')"
+  map_overlay_end="$(awk -v rs="${map_rel_start}" -v mb="${map_body}" 'BEGIN { print rs + mb }')"
 
   local map_w map_h
   map_w="$(awk -v w="${VIDEO_WIDTH}" 'BEGIN { printf "%d", w * 3 / 4 }')"
   map_h="$(awk -v h="${VIDEO_HEIGHT}" 'BEGIN { printf "%d", h * 3 / 4 }')"
 
-  map_filter="[0:v]trim=duration=${map_body},setpts=PTS-STARTPTS[bg];"
+  map_filter="[0:v]trim=duration=${map_encode_dur},setpts=PTS-STARTPTS[bg];"
   map_filter+="[1:v]trim=duration=${map_body},setpts=PTS-STARTPTS,"
   map_filter+="scale=${map_w}:${map_h}:force_original_aspect_ratio=decrease,"
   map_filter+="format=rgba[fg];"
-  map_filter+="[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto:shortest=1[vout]"
+  if awk -v rs="${map_rel_start}" 'BEGIN { exit (rs > 0.05) ? 0 : 1 }'; then
+    map_filter+="[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto:"
+    map_filter+="enable='between(t,${map_rel_start},${map_overlay_end})'[vout]"
+  else
+    map_filter+="[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto:shortest=1[vout]"
+  fi
 
   local -a concat_parts=()
 
-  if awk -v ms="${MAP_START}" 'BEGIN { exit (ms > 0.05) ? 0 : 1 }'; then
-    echo "提取地图前段 0 ~ ${MAP_START}s（流复制）..."
-    "${FFMPEG}" -hide_banner -y -i "${pre_map}" -t "${MAP_START}" \
+  if awk -v kf="${map_body_kf}" 'BEGIN { exit (kf > 0.05) ? 0 : 1 }'; then
+    echo "提取地图前段 0 ~ ${map_body_kf}s（关键帧对齐，流复制）..."
+    "${FFMPEG}" -hide_banner -y -i "${pre_map}" -to "${map_body_kf}" \
       -map 0:v:0 -map "0:a:0?" -c copy -movflags +faststart \
       "${TMPDIR}/part_map_pre.mp4"
     concat_parts+=("part_map_pre")
   fi
 
-  echo "重编码地图段 ${MAP_START}s ~ ${map_tail_start}s（overlay ${map_body}s）..."
+  echo "重编码地图段 ${map_body_kf}s ~ ${map_tail_start}s（overlay ${map_body}s，自 ${MAP_START}s 起）..."
   "${FFMPEG}" -hide_banner -y \
-    -ss "${MAP_START}" -i "${pre_map}" \
+    -ss "${map_body_kf}" -noaccurate_seek -i "${pre_map}" \
     -i "${MAP_MOV}" \
     -filter_complex "${map_filter}" \
-    -map "[vout]" -map "0:a:0?" -t "${map_body}" \
+    -map "[vout]" -map "0:a:0?" -t "${map_encode_dur}" \
     -c:v "${ENCODER}" -b:v 12M -tag:v "${VIDEO_TAG}" \
-    -fps_mode cfr -r 60000/1001 -video_track_timescale "${VIDEO_TIMESCALE}" \
+    -fps_mode cfr -r "${OUTPUT_FPS}" -video_track_timescale "${VIDEO_TIMESCALE}" \
+    -force_key_frames "expr:eq(n,0)" \
     -c:a copy \
     -avoid_negative_ts make_zero -reset_timestamps 1 \
     "${TMPDIR}/part_map_body.mp4"
   concat_parts+=("part_map_body")
 
   if awk -v fd="${final_duration}" -v ts="${map_tail_start}" 'BEGIN { exit (fd > ts) ? 0 : 1 }'; then
-    echo "提取地图后段 ${map_tail_start}s ~ 结束（流复制）..."
-    "${FFMPEG}" -hide_banner -y -ss "${map_tail_start}" -i "${pre_map}" \
+    echo "提取地图后段 ${map_tail_start}s ~ 结束（关键帧对齐，流复制）..."
+    "${FFMPEG}" -hide_banner -y -ss "${map_tail_start}" -noaccurate_seek -i "${pre_map}" \
       -map 0:v:0 -map "0:a:0?" \
-      -c copy -video_track_timescale "${VIDEO_TIMESCALE}" \
+      -c copy \
       -avoid_negative_ts make_zero -reset_timestamps 1 \
       "${TMPDIR}/part_map_post.mp4"
     concat_parts+=("part_map_post")
@@ -279,7 +321,7 @@ else
   swift "${SCRIPT_DIR}/render_title.swift" "${FONT_FILE}" "${TITLE}" "${TITLE_PNG}" "${FONT_SIZE}"
 fi
 
-# 流复制起点 = 标题结束后第 4 关键帧；intro 一次性重编码到此处（无中间文件拼接）
+# 流复制起点 = 标题结束后首个关键帧；intro 仅重编码 0~此处（约 18s 标题窗 + 缓冲，无中间拼接）
 TAIL_START="$(next_keyframe_after "${INPUT_MOV}" "${TITLE_END}")"
 [[ -n "${TAIL_START}" ]] || die "无法计算关键帧切点"
 
@@ -319,15 +361,24 @@ else
   FILTER+="[h][bt]concat=n=2:v=1:a=0,format=yuv420p10le[vout]"
 fi
 
-echo "重编码 0 ~ ${INTRO_DURATION}s（标题 ${BODY_DURATION}s，流复制从 ${TAIL_START}s 起）..."
+INTRO_MAP=( -map "[vout]" )
+INTRO_AUDIO=( -an )
+if [[ "${HAS_AUDIO}" -eq 1 ]]; then
+  FILTER+=";[0:a]atrim=0:${INTRO_DURATION},asetpts=PTS-STARTPTS[aout]"
+  INTRO_MAP+=( -map "[aout]" )
+  INTRO_AUDIO=( -c:a aac -b:a 192k )
+fi
+
+echo "重编码 0 ~ ${INTRO_DURATION}s（标题 ${BODY_DURATION}s，关键帧切点 ${TAIL_START}s，流复制从此处起）..."
 "${FFMPEG}" -hide_banner -y \
   -i "${INPUT_MOV}" \
-  -loop 1 -framerate 60000/1001 -t "${BODY_DURATION}" -i "${TITLE_PNG}" \
+  -loop 1 -framerate "${OUTPUT_FPS}" -t "${BODY_DURATION}" -i "${TITLE_PNG}" \
   -filter_complex "${FILTER}" \
-  -map "[vout]" -map "0:a:0?" -t "${INTRO_DURATION}" \
+  "${INTRO_MAP[@]}" -t "${INTRO_DURATION}" \
   -c:v "${ENCODER}" -b:v 12M -tag:v "${VIDEO_TAG}" \
-  -fps_mode cfr -r 60000/1001 -video_track_timescale "${VIDEO_TIMESCALE}" \
-  -c:a copy \
+  -fps_mode cfr -r "${OUTPUT_FPS}" -video_track_timescale "${VIDEO_TIMESCALE}" \
+  -force_key_frames "expr:gte(t,${INTRO_DURATION}-0.1)" \
+  "${INTRO_AUDIO[@]}" \
   -avoid_negative_ts make_zero -reset_timestamps 1 \
   "${TMPDIR}/part_intro.mp4"
 
@@ -337,11 +388,11 @@ if ! awk -v d="${DURATION}" -v s="${TAIL_START}" 'BEGIN { exit (d > s) ? 0 : 1 }
   exit 0
 fi
 
-# 片尾：从 TAIL_START 流复制
-echo "提取片尾 ${TAIL_START}s ~ 结束（流复制）..."
-"${FFMPEG}" -hide_banner -y -ss "${TAIL_START}" -i "${INPUT_MOV}" \
+# 片尾：从 TAIL_START 关键帧流复制（-noaccurate_seek 对齐关键帧，避免卡顿）
+echo "提取片尾 ${TAIL_START}s ~ 结束（关键帧对齐，流复制）..."
+"${FFMPEG}" -hide_banner -y -ss "${TAIL_START}" -noaccurate_seek -i "${INPUT_MOV}" \
   -map 0:v:0 -map "0:a:0?" \
-  -c copy -video_track_timescale "${VIDEO_TIMESCALE}" \
+  -c copy \
   -avoid_negative_ts make_zero -reset_timestamps 1 \
   "${TMPDIR}/part_tail.mp4"
 
