@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 视频剪辑：MOV → MP4，distName 命名，标题淡入淡出（PNG + fade）
-# step 4：26s 起嵌入 Google 地图动画 movie.mov（3/4 居中叠加）
+# 剪辑前 probe 原始 MOV 编码参数，后续重编码（标题 / Google 地图）均以该基准为准
+# step 4（可选 --map）：26s 起嵌入 Google 地图动画 movie.mov（3/4 居中叠加）
 # 局部重编码 + 关键帧对齐流复制拼接（-noaccurate_seek），避免拼接处卡顿
 set -euo pipefail
 
@@ -15,8 +16,9 @@ FADE_OUT=6
 TITLE_DURATION=$((FADE_IN + DISPLAY + FADE_OUT))
 TITLE_END=$((TITLE_START + TITLE_DURATION))
 
-# step 4：Google 地图动画从第 26 秒起嵌入
+# step 4：Google 地图动画从第 26 秒起嵌入（默认关闭，传 --map 开启）
 MAP_START=26
+ENABLE_MAP=0
 
 FONT_FILE="${SCRIPT_DIR}/fonts/Noto_Sans_SC/static/NotoSansSC-Medium.ttf"
 [[ -f "${FONT_FILE}" ]] || FONT_FILE="${SCRIPT_DIR}/fonts/Noto_Sans_SC/static/NotoSansSC-Regular.ttf"
@@ -30,6 +32,26 @@ die() {
   echo "错误: $*" >&2
   exit 1
 }
+
+usage() {
+  cat <<'EOF'
+用法: cut.sh [选项]
+
+选项:
+  --map       开启 Google 地图动画嵌入（第 26s 起叠加 movie.mov）
+  -h, --help  显示此帮助
+
+默认不嵌入 Google 地图动画。
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --map) ENABLE_MAP=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "未知选项: $1（使用 --help 查看用法）" ;;
+  esac
+done
 
 [[ -f "${FONT_FILE}" ]] || die "找不到开源字体 Noto Sans SC，请检查 src/fonts 目录"
 command -v swift >/dev/null 2>&1 || die "未找到 swift（macOS 自带）"
@@ -92,54 +114,49 @@ INPUT_MOV="${VIDEO_PATH}/${SRC_NAME}"
 [[ "${INPUT_MOV##*.}" =~ ^[Mm][Oo][Vv]$ ]] || die "输入文件必须是 MOV 格式: ${INPUT_MOV}"
 
 MAP_MOV=""
-for _map_candidate in "${VIDEO_PATH}/movie.mov" "${SCRIPT_DIR}/movie.mov"; do
-  [[ -f "${_map_candidate}" ]] || continue
-  MAP_MOV="${_map_candidate}"
-  break
-done
+if [[ "${ENABLE_MAP}" -eq 1 ]]; then
+  for _map_candidate in "${VIDEO_PATH}/movie.mov" "${SCRIPT_DIR}/movie.mov"; do
+    [[ -f "${_map_candidate}" ]] || continue
+    MAP_MOV="${_map_candidate}"
+    break
+  done
+  if [[ -n "${MAP_MOV}" ]]; then
+    echo "Google 地图动画: 开启（${MAP_MOV}，自 ${MAP_START}s 起）"
+  else
+    echo "警告: 已指定 --map 但未找到 movie.mov（videoPath 或 src 目录），跳过地图嵌入"
+  fi
+else
+  echo "Google 地图动画: 关闭（使用 --map 开启）"
+fi
 
 OUTPUT_MP4="${VIDEO_PATH}/${DIST_NAME}.mp4"
 [[ ! -f "${OUTPUT_MP4}" ]] || die "输出文件已存在，请先删除或重命名: ${OUTPUT_MP4}"
 
-DURATION="$("${FFPROBE}" -v error -show_entries format=duration -of csv=p=0 "${INPUT_MOV}")"
+PROBE_SCRIPT="${SCRIPT_DIR}/probe_video.sh"
+[[ -x "${PROBE_SCRIPT}" ]] || die "找不到 probe_video.sh: ${PROBE_SCRIPT}"
+
+echo "读取原始视频编码参数: ${INPUT_MOV}"
+eval "$("${PROBE_SCRIPT}" --vars "${INPUT_MOV}")"
+
+[[ -n "${VIDEO_CODEC:-}" ]] || die "无法读取视频编码"
+[[ -n "${ENCODER:-}" ]] || die "不支持的视频编码: ${VIDEO_CODEC}"
+[[ -n "${OUTPUT_FPS:-}" && -n "${VIDEO_TIMESCALE:-}" ]] || die "无法读取帧率或 timescale"
+[[ -n "${VIDEO_WIDTH:-}" && -n "${VIDEO_HEIGHT:-}" ]] || die "无法读取视频分辨率"
+[[ -n "${PIX_FMT:-}" ]] || die "无法读取像素格式"
+
+DURATION="${SOURCE_DURATION:-}"
 [[ -n "${DURATION}" ]] || die "无法读取视频时长"
 
-VIDEO_CODEC="$("${FFPROBE}" -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "${INPUT_MOV}" | tr -d '[:space:]')"
-case "${VIDEO_CODEC}" in
-  hevc|h265) ENCODER="hevc_videotoolbox"; VIDEO_TAG="hvc1"; BSF="hevc_mp4toannexb" ;;
-  h264|avc1) ENCODER="h264_videotoolbox"; VIDEO_TAG="avc1"; BSF="h264_mp4toannexb" ;;
-  *)         die "不支持的视频编码: ${VIDEO_CODEC}" ;;
-esac
-
-eval "$(python3 - "${FFPROBE}" "${INPUT_MOV}" <<'PY'
-import subprocess, shlex, sys
-
-ffprobe, path = sys.argv[1], sys.argv[2]
-row = subprocess.check_output(
-    [
-        ffprobe, "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "stream=r_frame_rate,time_base",
-        "-of", "csv=p=0", path,
-    ],
-    text=True,
-).strip().split(",")
-r_fps = row[0].strip()
-time_base = row[1].strip() if len(row) > 1 else "1/19200"
-timescale = time_base.split("/")[1] if "/" in time_base else "19200"
-print(f"OUTPUT_FPS={shlex.quote(r_fps)}")
-print(f"VIDEO_TIMESCALE={shlex.quote(timescale)}")
-PY
-)"
-echo "源视频帧率 ${OUTPUT_FPS}，timescale ${VIDEO_TIMESCALE}"
-
-VIDEO_WIDTH="$("${FFPROBE}" -v error -select_streams v:0 -show_entries stream=width -of default=noprint_wrappers=1:nokey=1 "${INPUT_MOV}" | head -1 | cut -d, -f1 | tr -cd '0-9')"
-VIDEO_HEIGHT="$("${FFPROBE}" -v error -select_streams v:0 -show_entries stream=height -of default=noprint_wrappers=1:nokey=1 "${INPUT_MOV}" | head -1 | cut -d, -f1 | tr -cd '0-9')"
-[[ -n "${VIDEO_WIDTH}" && -n "${VIDEO_HEIGHT}" ]] || die "无法读取视频分辨率"
+VIDEO_BITRATE="${SUGGESTED_VIDEO_BITRATE:-12M}"
+AUDIO_BITRATE="${SUGGESTED_AUDIO_BITRATE:-192k}"
 FONT_SIZE="$(awk -v h="${VIDEO_HEIGHT}" 'BEGIN { printf "%d", h / 18 }')"
 
-HAS_AUDIO=0
-if "${FFPROBE}" -v error -select_streams a:0 -show_entries stream=index -of csv=p=0 "${INPUT_MOV}" >/dev/null 2>&1; then
-  HAS_AUDIO=1
+echo "原始基准: ${VIDEO_CODEC} ${VIDEO_WIDTH}x${VIDEO_HEIGHT} ${OUTPUT_FPS}fps timescale=${VIDEO_TIMESCALE} pix_fmt=${PIX_FMT}"
+if [[ -n "${DEVICE_MODEL:-}" ]]; then
+  echo "拍摄设备: ${DEVICE_MODEL}"
+fi
+if [[ -n "${COLOR_TRANSFER:-}" ]]; then
+  echo "色彩: range=${COLOR_RANGE:-—} space=${COLOR_SPACE:-—} primaries=${COLOR_PRIMARIES:-—} transfer=${COLOR_TRANSFER}"
 fi
 
 TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/media-cut.XXXXXX")"
@@ -147,6 +164,23 @@ cleanup() { rm -rf "${TMPDIR}"; }
 trap cleanup EXIT
 
 DURATION_GT() { awk -v a="$1" -v b="$2" 'BEGIN { exit (a > b) ? 0 : 1 }'; }
+
+# 重编码参数一律以原始视频 probe 结果为基准（写入 VIDEO_ENCODE_ARGS，兼容 macOS bash 3.2）
+video_encode_args() {
+  VIDEO_ENCODE_ARGS=(
+    -c:v "${ENCODER}"
+    -b:v "${VIDEO_BITRATE}"
+    -tag:v "${VIDEO_TAG}"
+    -fps_mode cfr
+    -r "${OUTPUT_FPS}"
+    -video_track_timescale "${VIDEO_TIMESCALE}"
+    -pix_fmt "${PIX_FMT}"
+  )
+  [[ -n "${COLOR_RANGE:-}" && "${COLOR_RANGE}" != "unknown" ]] && VIDEO_ENCODE_ARGS+=( -color_range "${COLOR_RANGE}" )
+  [[ -n "${COLOR_SPACE:-}" && "${COLOR_SPACE}" != "unknown" ]] && VIDEO_ENCODE_ARGS+=( -colorspace "${COLOR_SPACE}" )
+  [[ -n "${COLOR_PRIMARIES:-}" && "${COLOR_PRIMARIES}" != "unknown" ]] && VIDEO_ENCODE_ARGS+=( -color_primaries "${COLOR_PRIMARIES}" )
+  [[ -n "${COLOR_TRANSFER:-}" && "${COLOR_TRANSFER}" != "unknown" ]] && VIDEO_ENCODE_ARGS+=( -color_trc "${COLOR_TRANSFER}" )
+}
 
 next_keyframe_after() {
   python3 - "${FFPROBE}" "$1" "$2" <<'PY'
@@ -232,14 +266,16 @@ embed_map_animation() {
 
   map_filter="[0:v]trim=duration=${map_encode_dur},setpts=PTS-STARTPTS[bg];"
   map_filter+="[1:v]trim=duration=${map_body},setpts=PTS-STARTPTS,"
+  map_filter+="fps=${OUTPUT_FPS},"
   map_filter+="scale=${map_w}:${map_h}:force_original_aspect_ratio=decrease,"
   map_filter+="format=rgba[fg];"
   if awk -v rs="${map_rel_start}" 'BEGIN { exit (rs > 0.05) ? 0 : 1 }'; then
     map_filter+="[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto:"
-    map_filter+="enable='between(t,${map_rel_start},${map_overlay_end})'[vout]"
+    map_filter+="enable='between(t,${map_rel_start},${map_overlay_end})'[vtmp]"
   else
-    map_filter+="[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto:shortest=1[vout]"
+    map_filter+="[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto:shortest=1[vtmp]"
   fi
+  map_filter+=";[vtmp]format=${PIX_FMT}[vout]"
 
   local -a concat_parts=()
 
@@ -251,14 +287,14 @@ embed_map_animation() {
     concat_parts+=("part_map_pre")
   fi
 
-  echo "重编码地图段 ${map_body_kf}s ~ ${map_tail_start}s（overlay ${map_body}s，自 ${MAP_START}s 起）..."
+  echo "重编码地图段 ${map_body_kf}s ~ ${map_tail_start}s（overlay ${map_body}s，自 ${MAP_START}s 起，基准 ${OUTPUT_FPS}fps ${PIX_FMT}）..."
+  video_encode_args
   "${FFMPEG}" -hide_banner -y \
     -ss "${map_body_kf}" -noaccurate_seek -i "${pre_map}" \
-    -i "${MAP_MOV}" \
+    -r "${OUTPUT_FPS}" -i "${MAP_MOV}" \
     -filter_complex "${map_filter}" \
     -map "[vout]" -map "0:a:0?" -t "${map_encode_dur}" \
-    -c:v "${ENCODER}" -b:v 12M -tag:v "${VIDEO_TAG}" \
-    -fps_mode cfr -r "${OUTPUT_FPS}" -video_track_timescale "${VIDEO_TIMESCALE}" \
+    "${VIDEO_ENCODE_ARGS[@]}" \
     -force_key_frames "expr:eq(n,0)" \
     -c:a copy \
     -avoid_negative_ts make_zero -reset_timestamps 1 \
@@ -325,7 +361,6 @@ fi
 TAIL_START="$(next_keyframe_after "${INPUT_MOV}" "${TITLE_END}")"
 [[ -n "${TAIL_START}" ]] || die "无法计算关键帧切点"
 
-HEAD_DURATION="${TITLE_START}"
 BODY_DURATION="${TITLE_DURATION}"
 if ! awk -v d="${DURATION}" -v e="${TITLE_END}" 'BEGIN { exit (d >= e) ? 0 : 1 }'; then
   BODY_DURATION="$(awk -v d="${DURATION}" -v s="${TITLE_START}" 'BEGIN { print d - s }')"
@@ -336,10 +371,7 @@ if ! awk -v d="${DURATION}" -v s="${TAIL_START}" 'BEGIN { exit (d > s) ? 0 : 1 }
   INTRO_DURATION="${DURATION}"
 fi
 
-POST_DURATION=0
-if awk -v d="${INTRO_DURATION}" -v e="${TITLE_END}" 'BEGIN { exit (d > e) ? 0 : 1 }'; then
-  POST_DURATION="$(awk -v d="${INTRO_DURATION}" -v e="${TITLE_END}" 'BEGIN { print d - e }')"
-fi
+OVERLAY_END="$(awk -v s="${TITLE_START}" -v b="${BODY_DURATION}" 'BEGIN { print s + b }')"
 
 FADE_OUT_START=$((FADE_IN + DISPLAY))
 if awk -v b="${BODY_DURATION}" -v t="${TITLE_DURATION}" 'BEGIN { exit (b < t) ? 0 : 1 }'; then
@@ -347,27 +379,23 @@ if awk -v b="${BODY_DURATION}" -v t="${TITLE_DURATION}" 'BEGIN { exit (b < t) ? 
   [[ "${FADE_OUT_START}" -ge "${FADE_IN}" ]] || FADE_OUT_START="${FADE_IN}"
 fi
 
-# 片头 + 标题(18s) + 关键帧缓冲：一次重编码视频；音频流复制（与片尾同源，避免拼接处 AAC 空洞）
-FILTER="[0:v]trim=duration=${HEAD_DURATION},setpts=PTS-STARTPTS[h];"
-FILTER+="[0:v]trim=start=${TITLE_START}:duration=${BODY_DURATION},setpts=PTS-STARTPTS[bs];"
+# 单次 trim + 定时 overlay（避免 head/body/post 三段 concat 在标题消失处丢帧卡顿）
+FILTER="[0:v]trim=duration=${INTRO_DURATION},setpts=PTS-STARTPTS[base];"
 FILTER+="[1:v]format=rgba,fade=t=in:st=0:d=${FADE_IN}:alpha=1,"
-FILTER+="fade=t=out:st=${FADE_OUT_START}:d=${FADE_OUT}:alpha=1[ov];"
-FILTER+="[bs][ov]overlay=(W-w)/2:(H-h)/2:format=auto[bt];"
-
-if awk -v p="${POST_DURATION}" 'BEGIN { exit (p > 0) ? 0 : 1 }'; then
-  FILTER+="[0:v]trim=start=${TITLE_END}:duration=${POST_DURATION},setpts=PTS-STARTPTS[te];"
-  FILTER+="[h][bt][te]concat=n=3:v=1:a=0,format=yuv420p10le[vout]"
-else
-  FILTER+="[h][bt]concat=n=2:v=1:a=0,format=yuv420p10le[vout]"
-fi
+FILTER+="fade=t=out:st=${FADE_OUT_START}:d=${FADE_OUT}:alpha=1,"
+FILTER+="setpts=PTS+${TITLE_START}/TB[ov];"
+FILTER+="[base][ov]overlay=(W-w)/2:(H-h)/2:format=auto:"
+FILTER+="enable='between(t,${TITLE_START},${OVERLAY_END})'[vtmp];"
+FILTER+="[vtmp]format=${PIX_FMT}[vout]"
 
 INTRO_MAP=( -map "[vout]" )
 INTRO_AUDIO=( -an )
 if [[ "${HAS_AUDIO}" -eq 1 ]]; then
-  FILTER+=";[0:a]atrim=0:${INTRO_DURATION},asetpts=PTS-STARTPTS[aout]"
-  INTRO_MAP+=( -map "[aout]" )
-  INTRO_AUDIO=( -c:a aac -b:a 192k )
+  INTRO_MAP+=( -map "0:a:0?" )
+  INTRO_AUDIO=( -c:a copy )
 fi
+
+video_encode_args
 
 echo "重编码 0 ~ ${INTRO_DURATION}s（标题 ${BODY_DURATION}s，关键帧切点 ${TAIL_START}s，流复制从此处起）..."
 "${FFMPEG}" -hide_banner -y \
@@ -375,8 +403,7 @@ echo "重编码 0 ~ ${INTRO_DURATION}s（标题 ${BODY_DURATION}s，关键帧切
   -loop 1 -framerate "${OUTPUT_FPS}" -t "${BODY_DURATION}" -i "${TITLE_PNG}" \
   -filter_complex "${FILTER}" \
   "${INTRO_MAP[@]}" -t "${INTRO_DURATION}" \
-  -c:v "${ENCODER}" -b:v 12M -tag:v "${VIDEO_TAG}" \
-  -fps_mode cfr -r "${OUTPUT_FPS}" -video_track_timescale "${VIDEO_TIMESCALE}" \
+  "${VIDEO_ENCODE_ARGS[@]}" \
   -force_key_frames "expr:gte(t,${INTRO_DURATION}-0.1)" \
   "${INTRO_AUDIO[@]}" \
   -avoid_negative_ts make_zero -reset_timestamps 1 \

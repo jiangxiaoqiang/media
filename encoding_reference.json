@@ -1,0 +1,85 @@
+{
+  "path": "/Users/dolphin/Documents/GitHub/media/src/IMG_0099.MOV",
+  "filename": "IMG_0099.MOV",
+  "format": {
+    "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+    "format_long_name": "QuickTime / MOV",
+    "duration_sec": "2533.855000",
+    "size_bytes": "18966817065",
+    "bit_rate": "59882880",
+    "bit_rate_kbps": "59882 kbps"
+  },
+  "device": {
+    "make": "Apple",
+    "model": "iPhone 17",
+    "software": "26.5.1",
+    "creation_time": "2026-06-19T00:46:35.000000Z",
+    "location": "+29.7174+106.6036+332.474/"
+  },
+  "video": {
+    "index": 0,
+    "codec_name": "hevc",
+    "codec_long_name": "H.265 / HEVC (High Efficiency Video Coding)",
+    "profile": "Main 10",
+    "level": 153,
+    "codec_tag_string": "hvc1",
+    "width": 3840,
+    "height": 2160,
+    "display_width": 3840,
+    "display_height": 2160,
+    "rotation_deg": 0,
+    "pix_fmt": "yuv420p10le",
+    "color_range": "tv",
+    "color_space": "bt2020nc",
+    "color_transfer": "arib-std-b67",
+    "color_primaries": "bt2020",
+    "field_order": "",
+    "r_frame_rate": "60/1",
+    "avg_frame_rate": "45588000/760157",
+    "fps": "60",
+    "avg_fps": "59.9718",
+    "time_base": "1/600",
+    "video_track_timescale": "600",
+    "bit_rate": "59220780",
+    "bit_rate_kbps": "59220 kbps",
+    "nb_frames": "151960",
+    "has_b_frames": 2,
+    "start_time": "0.000000",
+    "tags": {
+      "creation_time": "2026-06-19T00:46:35.000000Z",
+      "handler_name": "Core Media Video"
+    }
+  },
+  "audio": {
+    "index": 1,
+    "codec_name": "aac",
+    "codec_long_name": "AAC (Advanced Audio Coding)",
+    "profile": "LC",
+    "sample_rate": "48000",
+    "channels": 2,
+    "channel_layout": "stereo",
+    "bit_rate": "173902",
+    "bit_rate_kbps": "173 kbps",
+    "start_time": "0.000000",
+    "tags": {
+      "creation_time": "2026-06-19T00:46:35.000000Z",
+      "handler_name": "Core Media Audio"
+    }
+  },
+  "cut_sh": {
+    "VIDEO_CODEC": "hevc",
+    "ENCODER": "hevc_videotoolbox",
+    "VIDEO_TAG": "hvc1",
+    "BSF": "hevc_mp4toannexb",
+    "OUTPUT_FPS": "60",
+    "VIDEO_TIMESCALE": "600",
+    "VIDEO_WIDTH": "3840",
+    "VIDEO_HEIGHT": "2160",
+    "HAS_AUDIO": "1",
+    "PIX_FMT": "yuv420p10le",
+    "SOURCE_VIDEO_BITRATE_KBPS": "59220",
+    "SUGGESTED_VIDEO_BITRATE": "12M",
+    "SUGGESTED_AUDIO_BITRATE": "192k",
+    "SUGGESTED_AUDIO_CODEC": "aac"
+  }
+}
