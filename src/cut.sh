@@ -33,6 +33,70 @@ die() {
   exit 1
 }
 
+# 将 title 转为安全目录/文件名（保留中文，替换路径非法字符）
+sanitize_path_name() {
+  python3 - "$1" <<'PY'
+import re, sys
+s = (sys.argv[1] or "").strip()
+s = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "_", s)
+s = re.sub(r"\s+", " ", s).strip(" .")
+print(s[:200] if s else "untitled")
+PY
+}
+
+# 剪辑成功后：原片 MOV（以 title 重命名）与 Google 地图动画拷贝到 backup/<title>/（保留 workspace 原文件）
+backup_source_materials() {
+  local safe_title backup_dir mov_ext dest_mov dest_map
+  safe_title="$(sanitize_path_name "${TITLE}")"
+  [[ -n "${safe_title}" && "${safe_title}" != "untitled" ]] || die "title 无效，无法归档素材"
+
+  backup_dir="${SCRIPT_DIR}/backup/${safe_title}"
+  mkdir -p "${backup_dir}"
+
+  mov_ext="${SRC_NAME##*.}"
+  dest_mov="${backup_dir}/${safe_title}.${mov_ext}"
+  [[ -f "${INPUT_MOV}" ]] || die "找不到待归档原片: ${INPUT_MOV}"
+
+  echo "备份素材 → ${backup_dir}/"
+  cp -f "${INPUT_MOV}" "${dest_mov}"
+  echo "  原片: $(basename "${dest_mov}")"
+
+  if [[ -n "${MAP_MOV}" && -f "${MAP_MOV}" ]]; then
+    dest_map="${backup_dir}/movie.mov"
+    if [[ "${MAP_MOV}" != "${dest_map}" ]]; then
+      cp -f "${MAP_MOV}" "${dest_map}"
+      echo "  地图: movie.mov"
+    fi
+  fi
+}
+
+# 将 src 下两份元数据 JSON 拷贝到与 src 同级的 metadata/，以各自 title 命名（已存在则覆盖）
+archive_metadata_copies() {
+  local safe_title safe_title_en metadata_dir
+  metadata_dir="$(cd "${SCRIPT_DIR}/.." && pwd)/metadata"
+  mkdir -p "${metadata_dir}"
+
+  safe_title="$(sanitize_path_name "${TITLE}")"
+  [[ -n "${safe_title}" && "${safe_title}" != "untitled" ]] || die "title 无效，无法归档元数据"
+
+  cp -f "${METADATA}" "${metadata_dir}/${safe_title}.json"
+  echo "  元数据: metadata/${safe_title}.json"
+
+  if [[ -f "${METADATA_EN}" ]]; then
+    safe_title_en="$(sanitize_path_name "${TITLE_EN}")"
+    [[ -n "${safe_title_en}" && "${safe_title_en}" != "untitled" ]] || die "英文 title 无效，无法归档元数据"
+    cp -f "${METADATA_EN}" "${metadata_dir}/${safe_title_en}.json"
+    echo "  元数据: metadata/${safe_title_en}.json"
+  fi
+}
+
+finish_cut() {
+  echo "完成: ${OUTPUT_MP4}"
+  backup_source_materials
+  echo "归档元数据 → metadata/"
+  archive_metadata_copies
+}
+
 # videoPath：相对 workspace 根目录（如 src），`.` 表示脚本目录，或绝对路径
 resolve_video_path() {
   local p="$1"
@@ -151,13 +215,17 @@ else
   echo "Google 地图动画: 关闭（使用 --map 开启）"
 fi
 
-OUTPUT_MP4="${VIDEO_PATH}/${DIST_NAME}.mp4"
+OUTPUT_DIR="${SCRIPT_DIR}/output"
+mkdir -p "${OUTPUT_DIR}"
+OUTPUT_MP4="${OUTPUT_DIR}/${DIST_NAME}.mp4"
 [[ ! -f "${OUTPUT_MP4}" ]] || die "输出文件已存在，请先删除或重命名: ${OUTPUT_MP4}"
 
 PROBE_SCRIPT="${SCRIPT_DIR}/probe_video.sh"
 [[ -x "${PROBE_SCRIPT}" ]] || die "找不到 probe_video.sh: ${PROBE_SCRIPT}"
 
-echo "读取原始视频编码参数: ${INPUT_MOV}"
+echo "输入:   ${INPUT_MOV}"
+echo "输出:   ${OUTPUT_MP4}"
+echo "读取原始视频编码参数..."
 eval "$("${PROBE_SCRIPT}" --vars "${INPUT_MOV}")"
 
 [[ -n "${VIDEO_CODEC:-}" ]] || die "无法读取视频编码"
@@ -496,7 +564,7 @@ if ! DURATION_GT "${DURATION}" "${TITLE_START}"; then
     -c copy -movflags +faststart \
     "${TMPDIR}/pre_map.mp4"
   embed_map_animation "${TMPDIR}/pre_map.mp4" "${OUTPUT_MP4}"
-  echo "完成: ${OUTPUT_MP4}"
+  finish_cut
   exit 0
 fi
 
@@ -568,7 +636,7 @@ PRE_MAP_INTRO_DUR="$("${FFPROBE}" -v error -show_entries format=duration -of csv
 
 if ! awk -v d="${DURATION}" -v s="${TAIL_START}" 'BEGIN { exit (d > s) ? 0 : 1 }'; then
   embed_map_animation "${TMPDIR}/part_intro.mp4" "${OUTPUT_MP4}"
-  echo "完成: ${OUTPUT_MP4}"
+  finish_cut
   exit 0
 fi
 
@@ -599,4 +667,4 @@ echo "合并 intro + tail（TS concat demuxer）..."
   "${TMPDIR}/pre_map.mp4"
 
 embed_map_animation "${TMPDIR}/pre_map.mp4" "${OUTPUT_MP4}"
-echo "完成: ${OUTPUT_MP4}"
+finish_cut

@@ -3,4 +3,5 @@
 fonts/
 src/fonts/
 src/output/
+src/backup/
 .DS_Store

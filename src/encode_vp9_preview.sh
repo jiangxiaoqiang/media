@@ -39,7 +39,7 @@ usage() {
 选项:
   -d, --duration SEC   截取时长（秒），默认 ${DEFAULT_DURATION}
   -o, --output PATH    输出 WebM 路径（默认同目录 \${basename}_vp9_\${N}s.webm）
-  -m, --metadata JSON  从 processMatadata.json 读取剪辑输出（videoPath/distName.mp4）
+  -m, --metadata JSON  从 processMatadata.json 读取剪辑输出（output/distName.mp4）
   -h, --help           显示此帮助
 
 示例:
@@ -81,7 +81,7 @@ print(f"DIST_NAME={shlex.quote(dist_name)}")
 PY
 )"
   VIDEO_PATH="$(resolve_video_path "${VIDEO_PATH}")"
-  INPUT="${VIDEO_PATH}/${DIST_NAME}.mp4"
+  INPUT="${SCRIPT_DIR}/output/${DIST_NAME}.mp4"
 }
 
 while [[ $# -gt 0 ]]; do
