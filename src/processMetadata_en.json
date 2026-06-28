@@ -1,8 +1,8 @@
 {
-    "srcName": "IMG_0100-1.MOV",
-    "distName": "From Liziba Light Rail Station, Yuzhong District, Chongqing to Baijusi Yangtze River Bridge",
-    "title": "From Liziba Light Rail Station, Yuzhong District, Chongqing to Baijusi Yangtze River Bridge",
-    "startPosition": "Liziba Light Rail Station, Yuzhong District, Chongqing",
-    "endPosition": "Baijusi Yangtze River Bridge",
-    "videoPath": "/Users/dolphin/Documents/GitHub/media/src"
+    "srcName": "IMG_0034.MOV",
+    "distName": "Drive to Fuguo Town, Tongliang District, Chongqing",
+    "title": "Drive to Fuguo Town, Tongliang District, Chongqing",
+    "startPosition": "Fuguo Town, Tongliang District, Chongqing",
+    "endPosition": "Fuguo Town, Tongliang District, Chongqing",
+    "videoPath": "src/workspace"
 }

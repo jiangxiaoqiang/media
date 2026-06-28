@@ -16,6 +16,20 @@ die() {
   exit 1
 }
 
+# videoPath：相对 workspace 根目录（如 src），`.` 表示脚本目录，或绝对路径
+resolve_video_path() {
+  local p="$1"
+  if [[ -z "${p}" || "${p}" == "." ]]; then
+    echo "${SCRIPT_DIR}"
+  elif [[ "${p}" != /* ]]; then
+    local workspace_root
+    workspace_root="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    echo "$(cd "${workspace_root}/${p}" && pwd)"
+  else
+    echo "${p}"
+  fi
+}
+
 usage() {
   cat <<EOF
 用法: encode_vp9_preview.sh [选项] [输入视频]
@@ -66,6 +80,7 @@ print(f"VIDEO_PATH={shlex.quote(video_path)}")
 print(f"DIST_NAME={shlex.quote(dist_name)}")
 PY
 )"
+  VIDEO_PATH="$(resolve_video_path "${VIDEO_PATH}")"
   INPUT="${VIDEO_PATH}/${DIST_NAME}.mp4"
 }
 

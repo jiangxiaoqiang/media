@@ -164,6 +164,22 @@ def bitrate_kbps(value) -> str:
     return f"{bps // 1000} kbps"
 
 
+def bitrate_ffmpeg(value) -> str:
+    """ffprobe bit_rate (bps) → ffmpeg -b:v / -b:a 取值（如 59912k、185k）。"""
+    if value in (None, "", "N/A"):
+        return ""
+    try:
+        bps = int(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if bps <= 0:
+        return ""
+    kbps = bps // 1000
+    if kbps >= 1000 and kbps % 1000 == 0:
+        return f"{kbps // 1000}M"
+    return f"{kbps}k"
+
+
 def suggest_encoder(codec_name: str) -> dict:
     codec = (codec_name or "").lower()
     if codec in ("hevc", "h265"):
@@ -286,6 +302,8 @@ def analyze(path: str) -> dict:
         }
 
     has_audio = audio is not None
+    suggested_video_bitrate = bitrate_ffmpeg(v_bitrate) or "12M"
+    suggested_audio_bitrate = bitrate_ffmpeg(a_bitrate) or ("192k" if has_audio else "")
     result["cut_sh"] = {
         "VIDEO_CODEC": (video or {}).get("codec_name", ""),
         "ENCODER": suggest["encoder"],
@@ -298,8 +316,9 @@ def analyze(path: str) -> dict:
         "HAS_AUDIO": "1" if has_audio else "0",
         "PIX_FMT": (video or {}).get("pix_fmt", ""),
         "SOURCE_VIDEO_BITRATE_KBPS": bitrate_kbps(v_bitrate).replace(" kbps", "") if v_bitrate else "",
-        "SUGGESTED_VIDEO_BITRATE": "12M",
-        "SUGGESTED_AUDIO_BITRATE": "192k" if has_audio else "",
+        "SOURCE_AUDIO_BITRATE_KBPS": bitrate_kbps(a_bitrate).replace(" kbps", "") if a_bitrate else "",
+        "SUGGESTED_VIDEO_BITRATE": suggested_video_bitrate,
+        "SUGGESTED_AUDIO_BITRATE": suggested_audio_bitrate,
         "SUGGESTED_AUDIO_CODEC": "aac" if has_audio else "",
     }
 
@@ -400,6 +419,7 @@ def print_vars(report: dict) -> None:
         "AUDIO_SAMPLE_RATE": a.get("sample_rate", ""),
         "AUDIO_CHANNELS": str(a.get("channels") or ""),
         "SOURCE_VIDEO_BITRATE_KBPS": c.get("SOURCE_VIDEO_BITRATE_KBPS", ""),
+        "SOURCE_AUDIO_BITRATE_KBPS": c.get("SOURCE_AUDIO_BITRATE_KBPS", ""),
         "SUGGESTED_VIDEO_BITRATE": c.get("SUGGESTED_VIDEO_BITRATE", ""),
         "SUGGESTED_AUDIO_BITRATE": c.get("SUGGESTED_AUDIO_BITRATE", ""),
         "VIDEO_PROFILE": v.get("profile", ""),

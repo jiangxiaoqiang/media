@@ -1,6 +1,6 @@
 ### 剪辑环境
 
-剪辑视频使用的是M1 Pro芯片的Mac Book Pro。当前文件的路径是/Users/dolphin/Documents/GitHub/media/src
+剪辑视频使用的是M1 Pro芯片的Mac Book Pro。工作路径为 workspace 下的 `src/`（入口脚本 `src/cut.sh`）
 
 ### 驾驶POV视频剪辑流程
 

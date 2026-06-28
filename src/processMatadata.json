@@ -1,8 +1,8 @@
 {
-    "srcName": "IMG_0100-1.MOV",
-    "distName": "重庆市渝中区李子坝轻轨站到白居寺长江大桥",
-    "title": "重庆市渝中区李子坝轻轨站到白居寺长江大桥",
-    "startPosition": "重庆市渝中区李子坝轻轨站",
-    "endPosition": "白居寺长江大桥",
-    "videoPath": "/Users/dolphin/Documents/GitHub/media/src"
+    "srcName": "IMG_0034.MOV",
+    "distName": "驾车去重庆市铜梁区福果镇",
+    "title": "驾车去重庆市铜梁区福果镇",
+    "startPosition": "重庆市铜梁区福果镇",
+    "endPosition": "重庆市铜梁区福果镇",
+    "videoPath": "src/workspace"
 }
