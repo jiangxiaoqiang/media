@@ -244,6 +244,8 @@ PRE_MAP_INTRO_DUR="0"
 VIDEO_BITRATE="${SUGGESTED_VIDEO_BITRATE:-12M}"
 AUDIO_BITRATE="${SUGGESTED_AUDIO_BITRATE:-192k}"
 FONT_SIZE="$(awk -v h="${VIDEO_HEIGHT}" 'BEGIN { printf "%d", h / 18 }')"
+# 标题最大宽度（画面宽度的 85%），过长英文自动换行
+TITLE_MAX_WIDTH="$(awk -v w="${VIDEO_WIDTH}" 'BEGIN { printf "%d", w * 0.85 }')"
 
 echo "原始基准: ${VIDEO_CODEC} ${VIDEO_WIDTH}x${VIDEO_HEIGHT} ${OUTPUT_FPS}fps timescale=${VIDEO_TIMESCALE} pix_fmt=${PIX_FMT}"
 echo "重编码码率: 视频 ${VIDEO_BITRATE}（源 ${SOURCE_VIDEO_BITRATE_KBPS:-—} kbps）, 音频 ${AUDIO_BITRATE}（源 ${SOURCE_AUDIO_BITRATE_KBPS:-—} kbps）"
@@ -574,9 +576,9 @@ if [[ -n "${TITLE_EN}" && -n "${FONT_FILE_EN}" ]]; then
   echo "使用双语标题: 中文 + 英文"
   # 英文标题字体大小为主标题的 0.6 倍
   FONT_SIZE_EN="$(awk -v s="${FONT_SIZE}" 'BEGIN { printf "%d", s * 0.6 }')"
-  swift "${SCRIPT_DIR}/render_title.swift" "${FONT_FILE}" "${TITLE}" "${TITLE_PNG}" "${FONT_SIZE}" "${FONT_FILE_EN}" "${TITLE_EN}" "${FONT_SIZE_EN}"
+  swift "${SCRIPT_DIR}/render_title.swift" "${FONT_FILE}" "${TITLE}" "${TITLE_PNG}" "${FONT_SIZE}" "${FONT_FILE_EN}" "${TITLE_EN}" "${FONT_SIZE_EN}" "${TITLE_MAX_WIDTH}"
 else
-  swift "${SCRIPT_DIR}/render_title.swift" "${FONT_FILE}" "${TITLE}" "${TITLE_PNG}" "${FONT_SIZE}"
+  swift "${SCRIPT_DIR}/render_title.swift" "${FONT_FILE}" "${TITLE}" "${TITLE_PNG}" "${FONT_SIZE}" "${TITLE_MAX_WIDTH}"
 fi
 
 # 流复制起点 = 标题结束后首个关键帧；intro 仅重编码 0~此处（约 18s 标题窗 + 缓冲，无中间拼接）

@@ -1,8 +1,8 @@
 {
-    "srcName": "IMG_0032.MOV",
-    "distName": "重庆市大足区双桥到龙水镇龙水二小",
-    "title": "重庆市大足区双桥到龙水镇龙水二小",
-    "startPosition": "重庆市大足区双桥",
-    "endPosition": "龙水镇龙水二小",
+    "srcName": "IMG_0031.MOV",
+    "distName": "重庆市永川区卫星湖街道到大足区双桥经济技术开发区",
+    "title": "重庆市永川区卫星湖街道到大足区双桥经济技术开发区",
+    "startPosition": "重庆市九永川区卫星湖街道",
+    "endPosition": "大足区双桥经济技术开发区",
     "videoPath": "src/workspace"
 }
